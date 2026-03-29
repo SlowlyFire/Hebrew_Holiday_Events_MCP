@@ -57,6 +57,11 @@ server.tool(
 // --- HTTP Transport ---
 // This is what makes the server accessible over the network (vs. stdio which is local only).
 // Claude.ai and the Anthropic API will send POST requests to /mcp.
+const transport = new StreamableHTTPServerTransport({});
+
+// Connect ONCE at startup — tools are registered before any request comes in
+await server.connect(transport as any);
+
 const httpServer = http.createServer(async (req, res) => {
   if (req.method === "POST" && req.url === "/mcp") {
     // Collect the request body
@@ -64,8 +69,6 @@ const httpServer = http.createServer(async (req, res) => {
     req.on("data", chunk => { body += chunk; });
     req.on("end", async () => {
       try {
-        const transport = new StreamableHTTPServerTransport({});
-        await server.connect(transport as any);
         await transport.handleRequest(req, res, JSON.parse(body));
       } catch (err) {
         res.writeHead(500);
