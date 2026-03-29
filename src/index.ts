@@ -64,8 +64,8 @@ const httpServer = http.createServer(async (req, res) => {
     req.on("data", chunk => { body += chunk; });
     req.on("end", async () => {
       try {
-        const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-        await server.connect(transport);
+        const transport = new StreamableHTTPServerTransport({});
+        await server.connect(transport as any);
         await transport.handleRequest(req, res, JSON.parse(body));
       } catch (err) {
         res.writeHead(500);
