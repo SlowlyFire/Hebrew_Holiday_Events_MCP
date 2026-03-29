@@ -12,9 +12,6 @@ const holidays = [
   { name: "Shavuot", hebrewName: "שבועות", date: "2026-06-02", duration: 2, description: "Commemorates the giving of the Torah at Mount Sinai." },
 ];
 
-// --- Helper: build a fresh MCP server with tools registered ---
-// We create a new server per request because this is a stateless HTTP server.
-// Each request goes through the full MCP lifecycle independently.
 function createServer(): McpServer {
   const server = new McpServer({
     name: "hebrew-holidays-mcp",
@@ -48,21 +45,101 @@ function createServer(): McpServer {
   return server;
 }
 
-// --- HTTP Server ---
+// Manually handle the MCP JSON-RPC protocol without relying on session state
 const httpServer = http.createServer(async (req, res) => {
   if (req.method === "POST" && req.url === "/mcp") {
     let body = "";
     req.on("data", chunk => { body += chunk; });
     req.on("end", async () => {
       try {
-        // Fresh server + transport per request — correct stateless pattern
-        const server = createServer();
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => "stateless",
-          enableJsonResponse: true,
-        });
-        await server.connect(transport as any);
-        await transport.handleRequest(req, res, JSON.parse(body));
+        const message = JSON.parse(body) as { method: string; id: number; jsonrpc: string; params?: unknown };
+
+        res.setHeader("Content-Type", "application/json");
+
+        // Handle initialize — respond with server capabilities
+        if (message.method === "initialize") {
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              protocolVersion: "2024-11-05",
+              capabilities: { tools: { listChanged: false } },
+              serverInfo: { name: "hebrew-holidays-mcp", version: "1.0.0" },
+            },
+          }));
+          return;
+        }
+
+        // Handle tools/list — return tool definitions directly
+        if (message.method === "tools/list") {
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              tools: [
+                {
+                  name: "get_upcoming_jewish_holidays",
+                  description: "Returns a list of upcoming Jewish and Israeli holidays with their Hebrew names, Gregorian dates, duration, and a short description. Useful for planning, greetings, or answering questions about the Jewish calendar.",
+                  inputSchema: {
+                    type: "object",
+                    properties: {
+                      count: {
+                        type: "number",
+                        minimum: 1,
+                        maximum: 10,
+                        default: 3,
+                        description: "How many upcoming holidays to return",
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          }));
+          return;
+        }
+
+        // Handle tools/call — actually run the tool
+        if (message.method === "tools/call") {
+          const params = message.params as { name: string; arguments?: { count?: number } };
+          const count = params.arguments?.count ?? 3;
+          const today = new Date();
+          const upcoming = holidays
+            .filter(h => new Date(h.date) >= today)
+            .slice(0, count);
+
+          const text = upcoming.length === 0
+            ? "No upcoming holidays found."
+            : upcoming.map(h =>
+                `📅 ${h.name} (${h.hebrewName})\n   Date: ${h.date} | Duration: ${h.duration} day(s)\n   ${h.description}`
+              ).join("\n\n");
+
+          res.writeHead(200);
+          res.end(JSON.stringify({
+            jsonrpc: "2.0",
+            id: message.id,
+            result: { content: [{ type: "text", text }] },
+          }));
+          return;
+        }
+
+        // Handle notifications (initialized, etc.) — just acknowledge
+        if (!message.id) {
+          res.writeHead(204);
+          res.end();
+          return;
+        }
+
+        // Unknown method
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          error: { code: -32601, message: "Method not found" },
+        }));
+
       } catch (err) {
         console.error("MCP error:", err);
         res.writeHead(500);
