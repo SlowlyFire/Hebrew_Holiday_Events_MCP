@@ -47,6 +47,16 @@ function createServer(): McpServer {
 
 // Manually handle the MCP JSON-RPC protocol without relying on session state
 const httpServer = http.createServer(async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   if (req.method === "POST" && req.url === "/mcp") {
     let body = "";
     req.on("data", chunk => { body += chunk; });
